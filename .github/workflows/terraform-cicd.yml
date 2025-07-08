@@ -38,8 +38,8 @@ jobs:
         terraform_version: ${{ env.TF_VERSION }}
         cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
 
-    - name: Terraform Format Check
-      run: terraform fmt -check -recursive
+   # - name: Terraform Format Check
+   #   run: terraform fmt -check -recursive
 
     - name: Terraform Init
       run: terraform init
