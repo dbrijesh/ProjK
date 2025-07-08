@@ -127,7 +127,10 @@ jobs:
         id: plan
         run: |
           set -o pipefail
-          terraform plan -no-color -detailed-exitcode -out=tfplan 2>&1 | tee plan-output.txt
+          terraform plan \
+            -var="tfc_aws_access_key=${{ secrets.AWS_ACCESS_KEY_ID }}" \
+            -var="tfc_aws_secret_key=${{ secrets.AWS_SECRET_ACCESS_KEY }}" \
+            -no-color -detailed-exitcode -out=tfplan 2>&1 | tee plan-output.txt
           PLAN_EXIT_CODE=$?
           echo "plan-output=$(cat plan-output.txt)" >> $GITHUB_OUTPUT
           if [ $PLAN_EXIT_CODE -eq 1 ]; then
