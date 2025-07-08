@@ -358,11 +358,71 @@ resource "aws_db_proxy" "main" {
   
   role_arn               = aws_iam_role.rds_proxy[0].arn
   vpc_subnet_ids         = var.create_vpc ? aws_subnet.private[*].id : var.existing_private_subnet_ids
-  
-  target {
-    db_instance_identifier = aws_db_instance.main[0].id
-  }
+
 }
+
+resource "aws_db_proxy_default_target_group" "main" {
+  count = var.enable_rds_proxy ? 1 : 0
+  db_proxy_name = aws_db_proxy.main[0].name
+
+  connection_pool_config {
+    connection_borrow_timeout = 120
+    max_connections_percent = 100
+    max_idle_connections_percent = 50
+    session_pinning_filters = ["EXCLUDE_VARIABLE_SETS"]
+  }
+  
+}
+
+resource "aws_db_proxy_target" "main" {
+  count = var.enable_rds_proxy ? 1 : 0
+  
+  db_instance_identifier = aws_db_instance.main[0].id
+  db_proxy_name          = aws_db_proxy.main[0].name
+  target_group_name      = aws_db_proxy_default_target_group.main[0].name
+}
+
+# RDS Proxy IAM Role
+resource "aws_iam_role" "rds_proxy" {
+  count = var.enable_rds_proxy ? 1 : 0
+  
+  name = "${var.project_name}-rds-proxy-role"
+  
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "rds.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "rds_proxy" {
+  count = var.enable_rds_proxy ? 1 : 0
+  
+  name = "${var.project_name}-rds-proxy-policy"
+  role = aws_iam_role.rds_proxy[0].id
+  
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:DescribeSecret"
+        ]
+        Resource = aws_secretsmanager_secret.rds_proxy[0].arn
+      }
+    ]
+  })
+}
+
 
 # RDS Proxy Secret
 resource "aws_secretsmanager_secret" "rds_proxy" {
