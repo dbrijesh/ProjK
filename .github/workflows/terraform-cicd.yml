@@ -21,8 +21,8 @@ on:
 env:
   TF_VERSION: '1.6.0'
   AWS_REGION: 'us-east-1'
-  TF_CLOUD_ORGANIZATION: 'your-org-name'
-  TF_WORKSPACE: 'aws-infrastructure'
+  TF_CLOUD_ORGANIZATION: 'brijeshorg'
+  TF_WORKSPACE: 'brijeshworkspace'
 
 jobs:
   terraform-validate:
