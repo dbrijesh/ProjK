@@ -9,9 +9,9 @@ terraform {
   }
   
   cloud {
-    organization = "your-org-name"
+    organization = "brijeshorg"
     workspaces {
-      name = "aws-infrastructure"
+      name = "brijeshworkspace"
     }
   }
 }
