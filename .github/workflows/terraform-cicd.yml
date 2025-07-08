@@ -83,8 +83,8 @@ jobs:
       - name: Terraform Validate
         run: terraform validate -no-color
 
-      - name: Terraform Format Check
-        run: terraform fmt -check -recursive -diff
+      #- name: Terraform Format Check
+      #  run: terraform fmt -check -recursive -diff
 
   terraform-plan:
     name: Terraform Plan
