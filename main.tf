@@ -6,10 +6,6 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
-    random = {
-      source  = "hashicorp/random"
-      version = "~> 3.0"
-    }
   }
   
   cloud {
@@ -225,15 +221,65 @@ resource "aws_lb_listener" "main" {
   }
 }
 
+# ECS IAM Roles
+resource "aws_iam_role" "ecs_execution_role" {
+  count = var.enable_ecs ? 1 : 0
+
+  name = "${var.project_name}-ecs-execution-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "ecs-tasks.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "ecs_execution_role_policy" {
+  count = var.enable_ecs ? 1 : 0
+
+  role       = aws_iam_role.ecs_execution_role[0].name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+resource "aws_iam_role" "ecs_task_role" {
+  count = var.enable_ecs ? 1 : 0
+
+  name = "${var.project_name}-ecs-task-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "ecs-tasks.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
 # ECS Cluster
 resource "aws_ecs_cluster" "main" {
   count = var.enable_ecs ? 1 : 0
   
   name = "${var.project_name}-cluster"
   
-  setting {
-    name  = "containerInsights"
-    value = "enabled"
+  configuration {
+    execute_command_configuration {
+      logging = "OVERRIDE"
+      log_configuration {
+        cloud_watch_log_group_name = aws_cloudwatch_log_group.ecs[0].name
+      }
+    }
   }
 }
 
@@ -253,8 +299,8 @@ resource "aws_ecs_task_definition" "main" {
   requires_compatibilities = ["FARGATE"]
   cpu                      = var.ecs_cpu
   memory                   = var.ecs_memory
-  execution_role_arn       = aws_iam_role.ecs_execution[0].arn
-  task_role_arn            = aws_iam_role.ecs_task[0].arn
+  execution_role_arn       = aws_iam_role.ecs_execution_role[0].arn
+  task_role_arn            = aws_iam_role.ecs_task_role[0].arn
   
   container_definitions = jsonencode([
     {
@@ -271,13 +317,11 @@ resource "aws_ecs_task_definition" "main" {
       logConfiguration = {
         logDriver = "awslogs"
         options = {
-          "awslogs-group"         = aws_cloudwatch_log_group.ecs[0].name
-          "awslogs-region"        = data.aws_region.current.name
-          "awslogs-stream-prefix" = "ecs"
+          awslogs-group         = aws_cloudwatch_log_group.ecs[0].name
+          awslogs-region        = data.aws_region.current.name
+          awslogs-stream-prefix = "ecs"
         }
       }
-      
-      essential = true
     }
   ])
 }
@@ -310,62 +354,12 @@ resource "aws_ecs_service" "main" {
   depends_on = [aws_lb_listener.main]
 }
 
-# ECS IAM Roles
-resource "aws_iam_role" "ecs_execution" {
-  count = var.enable_ecs ? 1 : 0
-  
-  name = "${var.project_name}-ecs-execution-role"
-  
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Action = "sts:AssumeRole"
-        Effect = "Allow"
-        Principal = {
-          Service = "ecs-tasks.amazonaws.com"
-        }
-      }
-    ]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "ecs_execution" {
-  count = var.enable_ecs ? 1 : 0
-  
-  role       = aws_iam_role.ecs_execution[0].name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
-}
-
-resource "aws_iam_role" "ecs_task" {
-  count = var.enable_ecs ? 1 : 0
-  
-  name = "${var.project_name}-ecs-task-role"
-  
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Action = "sts:AssumeRole"
-        Effect = "Allow"
-        Principal = {
-          Service = "ecs-tasks.amazonaws.com"
-        }
-      }
-    ]
-  })
-}
-
 # RDS Subnet Group
 resource "aws_db_subnet_group" "main" {
   count = var.enable_rds ? 1 : 0
   
   name       = "${var.project_name}-db-subnet-group"
   subnet_ids = var.create_vpc ? aws_subnet.private[*].id : var.existing_private_subnet_ids
-  
-  tags = {
-    Name = "${var.project_name}-db-subnet-group"
-  }
 }
 
 # RDS Instance
@@ -397,29 +391,43 @@ resource "aws_db_instance" "main" {
   deletion_protection = false
 }
 
-# RDS Proxy Secret
-resource "aws_secretsmanager_secret" "rds_proxy" {
+# RDS Proxy
+resource "aws_db_proxy" "main" {
   count = var.enable_rds_proxy ? 1 : 0
   
-  name = "${var.project_name}-rds-proxy-secret"
+  name                   = "${var.project_name}-db-proxy"
+  engine_family          = "POSTGRESQL"
+  auth {
+    auth_scheme = "SECRETS"
+    secret_arn  = aws_secretsmanager_secret.rds_proxy[0].arn
+  }
   
-  tags = {
-    Name = "${var.project_name}-rds-proxy-secret"
+  role_arn               = aws_iam_role.rds_proxy_role[0].arn
+  vpc_subnet_ids         = var.create_vpc ? aws_subnet.private[*].id : var.existing_private_subnet_ids
+}
+
+resource "aws_db_proxy_default_target_group" "main" {
+  count = var.enable_rds_proxy ? 1 : 0
+  db_proxy_name = aws_db_proxy.main[0].name
+
+  connection_pool_config {
+    connection_borrow_timeout = 120
+    max_connections_percent = 100
+    max_idle_connections_percent = 50
+    session_pinning_filters = ["EXCLUDE_VARIABLE_SETS"]
   }
 }
 
-resource "aws_secretsmanager_secret_version" "rds_proxy" {
+resource "aws_db_proxy_target" "main" {
   count = var.enable_rds_proxy ? 1 : 0
   
-  secret_id = aws_secretsmanager_secret.rds_proxy[0].id
-  secret_string = jsonencode({
-    username = var.rds_username
-    password = var.rds_password
-  })
+  db_instance_identifier = aws_db_instance.main[0].id
+  db_proxy_name          = aws_db_proxy.main[0].name
+  target_group_name      = aws_db_proxy_default_target_group.main[0].name
 }
 
 # RDS Proxy IAM Role
-resource "aws_iam_role" "rds_proxy" {
+resource "aws_iam_role" "rds_proxy_role" {
   count = var.enable_rds_proxy ? 1 : 0
   
   name = "${var.project_name}-rds-proxy-role"
@@ -442,7 +450,7 @@ resource "aws_iam_role_policy" "rds_proxy_policy" {
   count = var.enable_rds_proxy ? 1 : 0
   
   name = "${var.project_name}-rds-proxy-policy"
-  role = aws_iam_role.rds_proxy[0].id
+  role = aws_iam_role.rds_proxy_role[0].id
   
   policy = jsonencode({
     Version = "2012-10-17"
@@ -459,101 +467,21 @@ resource "aws_iam_role_policy" "rds_proxy_policy" {
   })
 }
 
-# RDS Proxy
-resource "aws_db_proxy" "main" {
+# RDS Proxy Secret
+resource "aws_secretsmanager_secret" "rds_proxy" {
   count = var.enable_rds_proxy ? 1 : 0
   
-  name          = "${var.project_name}-db-proxy"
-  engine_family = "POSTGRESQL"
-  
-  auth {
-    auth_scheme = "SECRETS"
-    secret_arn  = aws_secretsmanager_secret.rds_proxy[0].arn
-  }
-  
-  role_arn       = aws_iam_role.rds_proxy[0].arn
-  vpc_subnet_ids = var.create_vpc ? aws_subnet.private[*].id : var.existing_private_subnet_ids
-  
-  require_tls = true
-  
-  tags = {
-    Name = "${var.project_name}-db-proxy"
-  }
+  name = "${var.project_name}-rds-proxy-secret"
 }
 
-resource "aws_db_proxy_default_target_group" "main" {
+resource "aws_secretsmanager_secret_version" "rds_proxy" {
   count = var.enable_rds_proxy ? 1 : 0
   
-  db_proxy_name = aws_db_proxy.main[0].name
-  
-  connection_pool_config {
-    connection_borrow_timeout    = 120
-    max_connections_percent      = 100
-    max_idle_connections_percent = 50
-    session_pinning_filters      = ["EXCLUDE_VARIABLE_SETS"]
-  }
-}
-
-resource "aws_db_proxy_target" "main" {
-  count = var.enable_rds_proxy ? 1 : 0
-  
-  db_instance_identifier = aws_db_instance.main[0].id
-  db_proxy_name          = aws_db_proxy.main[0].name
-  target_group_name      = aws_db_proxy_default_target_group.main[0].name
-}
-
-# Lambda IAM Role
-resource "aws_iam_role" "lambda" {
-  count = var.enable_lambda ? 1 : 0
-  
-  name = "${var.project_name}-lambda-role"
-  
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Action = "sts:AssumeRole"
-        Effect = "Allow"
-        Principal = {
-          Service = "lambda.amazonaws.com"
-        }
-      }
-    ]
+  secret_id = aws_secretsmanager_secret.rds_proxy[0].id
+  secret_string = jsonencode({
+    username = var.rds_username
+    password = var.rds_password
   })
-}
-
-resource "aws_iam_role_policy_attachment" "lambda_basic" {
-  count = var.enable_lambda ? 1 : 0
-  
-  role       = aws_iam_role.lambda[0].name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
-}
-
-resource "aws_iam_role_policy_attachment" "lambda_vpc" {
-  count = var.enable_lambda ? 1 : 0
-  
-  role       = aws_iam_role.lambda[0].name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
-}
-
-# Lambda Security Group
-resource "aws_security_group" "lambda" {
-  count = var.enable_lambda ? 1 : 0
-  
-  name        = "${var.project_name}-lambda-sg"
-  description = "Security group for Lambda"
-  vpc_id      = var.create_vpc ? aws_vpc.main[0].id : var.existing_vpc_id
-  
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-  
-  tags = {
-    Name = "${var.project_name}-lambda-sg"
-  }
 }
 
 # Lambda Function
@@ -572,29 +500,36 @@ resource "aws_lambda_function" "main" {
     subnet_ids         = var.create_vpc ? aws_subnet.private[*].id : var.existing_private_subnet_ids
     security_group_ids = [aws_security_group.lambda[0].id]
   }
+}
+
+resource "aws_security_group" "lambda" {
+  count = var.enable_lambda ? 1 : 0
   
-  tags = {
-    Name = "${var.project_name}-function"
+  name        = "${var.project_name}-lambda-sg"
+  description = "Security group for Lambda"
+  vpc_id      = var.create_vpc ? aws_vpc.main[0].id : var.existing_vpc_id
+  
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
   }
 }
 
 # S3 Bucket
+resource "aws_s3_bucket" "main" {
+  count = var.enable_s3 ? 1 : 0
+  
+  bucket = "${var.project_name}-${random_string.bucket_suffix[0].result}"
+}
+
 resource "random_string" "bucket_suffix" {
   count = var.enable_s3 ? 1 : 0
   
   length  = 8
   special = false
   upper   = false
-}
-
-resource "aws_s3_bucket" "main" {
-  count = var.enable_s3 ? 1 : 0
-  
-  bucket = "${var.project_name}-${random_string.bucket_suffix[0].result}"
-  
-  tags = {
-    Name = "${var.project_name}-bucket"
-  }
 }
 
 resource "aws_s3_bucket_versioning" "main" {
@@ -616,15 +551,4 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "main" {
       sse_algorithm = "AES256"
     }
   }
-}
-
-resource "aws_s3_bucket_public_access_block" "main" {
-  count = var.enable_s3 ? 1 : 0
-  
-  bucket = aws_s3_bucket.main[0].id
-  
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
 }
