@@ -19,7 +19,12 @@ terraform {
 provider "aws" {
   region = var.aws_region
   
-  default_tags {
+  # Explicit authentication settings
+  skip_credentials_validation = false
+  skip_metadata_api_check     = false
+  skip_requesting_account_id  = false
+  
+   default_tags {
     tags = {
       Environment   = var.environment
       Project       = var.project_name
