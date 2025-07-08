@@ -19,17 +19,23 @@ terraform {
 provider "aws" {
   region = var.aws_region
   
-  # Explicit authentication settings
-  skip_credentials_validation = false
-  skip_metadata_api_check     = false
-  skip_requesting_account_id  = false
+  # For Terraform Cloud runs
+  access_key = var.tfc_aws_access_key != "" ? var.tfc_aws_access_key : null
+  secret_key = var.tfc_aws_secret_key != "" ? var.tfc_aws_secret_key : null
+  token      = var.tfc_aws_session_token != "" ? var.tfc_aws_session_token : null
   
-   default_tags {
+  # For local runs
+  dynamic "assume_role" {
+    for_each = var.aws_role_arn != "" ? [1] : []
+    content {
+      role_arn = var.aws_role_arn
+    }
+  }
+  
+  default_tags {
     tags = {
-      Environment   = var.environment
-      Project       = var.project_name
-      ManagedBy     = "Terraform"
-      CreatedBy     = "GitHub-Actions"
+      Environment = var.environment
+      Project     = var.project_name
     }
   }
 }
