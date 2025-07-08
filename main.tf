@@ -402,7 +402,7 @@ resource "aws_iam_role" "rds_proxy" {
   })
 }
 
-resource "aws_iam_role_policy" "rds_proxy" {
+resource "aws_iam_role_policy" "rds_proxy_policy" {
   count = var.enable_rds_proxy ? 1 : 0
   
   name = "${var.project_name}-rds-proxy-policy"
