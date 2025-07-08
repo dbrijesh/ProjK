@@ -183,3 +183,30 @@ variable "lambda_memory_size" {
   type        = number
   default     = 128
 }
+
+variable "tfc_aws_access_key" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "AWS access key for Terraform Cloud runs"
+}
+
+variable "tfc_aws_secret_key" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "AWS secret key for Terraform Cloud runs"
+}
+
+variable "tfc_aws_session_token" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "AWS session token for Terraform Cloud runs"
+}
+
+variable "aws_role_arn" {
+  type        = string
+  default     = ""
+  description = "AWS role ARN for local development"
+}
