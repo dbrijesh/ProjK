@@ -1,15 +1,15 @@
 # terraform-cloud-setup.tf
 # This file helps set up Terraform Cloud workspace configuration
 
-terraform {
-  cloud {
-    organization = "your-org-name"
-    
-    workspaces {
-      name = "aws-infrastructure"
-    }
-  }
-}
+#terraform {
+#  cloud {
+#    organization = "your-org-name"
+#    
+#    workspaces {
+#      name = "aws-infrastructure"
+#    }
+#  }
+#}
 
 # Terraform Cloud workspace configuration
 # You can also configure this through the Terraform Cloud UI
