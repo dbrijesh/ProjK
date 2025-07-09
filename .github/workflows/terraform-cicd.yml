@@ -161,29 +161,55 @@ jobs:
 
 
 
-      - name: Comment PR with Plan
-        
+      - name: Generate and Comment Plan with Diagram
+        if: (github.event_name == 'pull_request' || github.event_name == 'push' ) && success()
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
+            const { execSync } = require('child_process');
+            const core = require('@actions/core');
+            
             try {
+              // 1. Read the plan output
               const plan = fs.readFileSync('plan-output.txt', 'utf8');
-              const maxGitHubBodyCharacters = 65536;
+              
+              // 2. Generate visualization diagram
+              try {
+                // Install graphviz if needed
+                execSync('sudo apt-get install -y graphviz');
+                
+                // Generate diagram (requires terraform graph command)
+                execSync('terraform graph -type=plan | dot -Tpng > diagram.png');
+                
+                // Upload diagram as artifact
+                execSync(`curl -X POST \
+                  -H "Authorization: token ${{ github.token }}" \
+                  -H "Content-Type: image/png" \
+                  --data-binary @diagram.png \
+                  "https://uploads.github.com/repos/${{ github.repository }}/releases/${{ github.event.pull_request.head.sha }}/assets?name=terraform-diagram.png"`);
+              } catch (diagramError) {
+                core.warning(`Failed to generate diagram: ${diagramError.message}`);
+              }
+      
+              // 3. Create PR comment with both plan and diagram
+              const maxGitHubBodyCharacters = 60000; // Leave room for diagram link
+              const diagramUrl = `https://github.com/${{ github.repository }}/releases/download/${{ github.event.pull_request.head.sha }}/terraform-diagram.png`;
               
               function chunkSubstr(str, size) {
                 const numChunks = Math.ceil(str.length / size);
-                const chunks = new Array(numChunks);
-                for (let i = 0, o = 0; i < numChunks; ++i, o += size) {
-                  chunks[i] = str.substr(o, size);
-                }
-                return chunks;
+                return Array.from({ length: numChunks }, (_, i) =>
+                  str.substr(i * size, size)
+                );
               }
-              
+      
               const planChunks = chunkSubstr(plan, maxGitHubBodyCharacters);
               
               for (let i = 0; i < planChunks.length; i++) {
                 const body = `## Terraform Plan Output (Part ${i + 1}/${planChunks.length})
+                
+                ### Infrastructure Diagram
+                ![Terraform Diagram](${diagramUrl})
                 
                 \`\`\`terraform
                 ${planChunks[i]}
@@ -198,7 +224,7 @@ jobs:
                 });
               }
             } catch (error) {
-              console.error('Error creating plan comment:', error);
+              core.error(`Error creating plan comment: ${error}`);
               core.setFailed('Failed to create plan comment');
             }
 
