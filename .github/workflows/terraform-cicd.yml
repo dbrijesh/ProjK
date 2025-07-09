@@ -168,66 +168,57 @@ jobs:
           script: |
             const fs = require('fs');
             const { execSync } = require('child_process');
-            const core = require('@actions/core');
             
             try {
               // 1. Read the plan output
               const plan = fs.readFileSync('plan-output.txt', 'utf8');
               
               // 2. Generate visualization diagram
+              let diagramUrl = '';
               try {
                 // Install graphviz if needed
                 execSync('sudo apt-get install -y graphviz');
                 
-                // Generate diagram (requires terraform graph command)
+                // Generate diagram
                 execSync('terraform graph -type=plan | dot -Tpng > diagram.png');
                 
-                // Upload diagram as artifact
-                execSync(`curl -X POST \
-                  -H "Authorization: token ${{ github.token }}" \
-                  -H "Content-Type: image/png" \
-                  --data-binary @diagram.png \
-                  "https://uploads.github.com/repos/${{ github.repository }}/releases/${{ github.event.pull_request.head.sha }}/assets?name=terraform-diagram.png"`);
+                // Upload diagram (alternative to releases if needed)
+                const uploadResponse = await github.rest.repos.uploadReleaseAsset({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  release_id: context.payload.release?.id || context.payload.pull_request?.head.sha,
+                  name: 'terraform-diagram.png',
+                  data: fs.readFileSync('diagram.png')
+                });
+                diagramUrl = uploadResponse.data.browser_download_url;
               } catch (diagramError) {
-                core.warning(`Failed to generate diagram: ${diagramError.message}`);
+                console.warn(`Diagram generation skipped: ${diagramError.message}`);
               }
       
-              // 3. Create PR comment with both plan and diagram
-              const maxGitHubBodyCharacters = 60000; // Leave room for diagram link
-              const diagramUrl = `https://github.com/${{ github.repository }}/releases/download/${{ github.event.pull_request.head.sha }}/terraform-diagram.png`;
+              // 3. Create PR comment
+              const maxBodyChars = 60000;
+              const chunks = [];
               
-              function chunkSubstr(str, size) {
-                const numChunks = Math.ceil(str.length / size);
-                return Array.from({ length: numChunks }, (_, i) =>
-                  str.substr(i * size, size)
-                );
+              for (let i = 0, offset = 0; offset < plan.length; i++) {
+                chunks.push(plan.substr(offset, maxBodyChars));
+                offset += maxBodyChars;
               }
       
-              const planChunks = chunkSubstr(plan, maxGitHubBodyCharacters);
-              
-              for (let i = 0; i < planChunks.length; i++) {
-                const body = `## Terraform Plan Output (Part ${i + 1}/${planChunks.length})
-                
-                ### Infrastructure Diagram
-                ![Terraform Diagram](${diagramUrl})
-                
-                \`\`\`terraform
-                ${planChunks[i]}
-                \`\`\`
-                `;
-                
+              for (const [i, chunk] of chunks.entries()) {
                 await github.rest.issues.createComment({
                   issue_number: context.issue.number,
                   owner: context.repo.owner,
                   repo: context.repo.repo,
-                  body: body
+                  body: `## Terraform Plan (Part ${i+1}/${chunks.length})
+                  ${diagramUrl ? `\n![Infra Diagram](${diagramUrl})` : ''}
+                  \`\`\`terraform
+                  ${chunk}
+                  \`\`\``
                 });
               }
             } catch (error) {
-              core.error(`Error creating plan comment: ${error}`);
-              core.setFailed('Failed to create plan comment');
+              core.setFailed(`Action failed: ${error}`);
             }
-
   terraform-apply:
     name: Terraform Apply
     runs-on: ubuntu-latest
