@@ -1,0 +1,18 @@
+#!/bin/bash
+# Expand root partition & filesystem at boot
+
+# Grow partition 1 on xvda (this creates/extends xvda1)
+growpart /dev/xvda 1
+
+# Detect filesystem type and expand accordingly
+fs_type=$(blkid -o value -s TYPE /dev/xvda1)
+
+if [ "$fs_type" == "xfs" ]; then
+  xfs_growfs /
+elif [ "$fs_type" == "ext4" ]; then
+  resize2fs /dev/xvda1
+fi
+
+# Log the result
+echo "Disk resize completed on $(date)" >> /var/log/resize.log
+df -h >> /var/log/resize.log
